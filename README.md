@@ -12,6 +12,12 @@ It's a Telegram bot for search Thai Act article using a text from Krisdika. For 
 1. Create a Telegram bot using [Botfather](https://telegram.me/BotFather)
 2. Rename (`sample.env`)[./.sample.env) to `.env` and change the value in the file
 3. `bun run index.ts`
+4. In the bot chat, type:
+
+```
+กม ชื่อกฎหมาย(ป.อ.|ป.พ.พ.|พ.ร.บ.xxxx) xxเลขมาตรา(ถ้ามีเลขบาลีให้เขียนติดกันกับเลขมาตราหลัก)xx
+กม ชื่อกฎหมาย(ป.อ.|ป.พ.พ.|พ.ร.บ.xxxx) คำ,สำคัญ
+```
 
 ## Where?
 
