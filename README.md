@@ -4,7 +4,7 @@
 
 It's a Telegram bot for search Thai Act article using a text from Krisdika. For quick and crude to search the law.
 
-![Screenshot example](./assets/screenshot.png)
+![Screenshot example](./assets/screenshot.jpg)
 
 ## How?
 
