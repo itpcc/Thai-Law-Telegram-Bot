@@ -1,0 +1,6 @@
+{
+	"name": "Thai Law: Telegram Bot",
+	"repo": "https://github.com/itpcc/Thai-Law-Telegram-Bot",
+	"description": "A Telegram bot for search Thai Act article using a text from Krisdika. For quick and crude to search the law.",
+	"languages": ["typescript", "bun"]
+}
