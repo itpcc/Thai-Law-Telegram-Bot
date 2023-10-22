@@ -1,0 +1,6 @@
+[submodule "workers/chatbot-worker-doc-gen"]
+	path = workers/chatbot-worker-doc-gen
+	url = https://itpcc@github.com/itpcc/chatbot-worker-doc-gen.git
+[submodule "workers/chatbot-worker-deka"]
+	path = workers/chatbot-worker-deka
+	url = https://itpcc@github.com/itpcc/chatbot-worker-deka.git
