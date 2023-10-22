@@ -1,24 +1,30 @@
-import { Elysia, t } from "elysia";
-import Ajv, {JSONSchemaType} from "ajv";
-import AjvKeyword from "ajv-keywords";
-import { convert } from "html-to-text";
-import { Database } from "bun:sqlite";
-import { decode } from 'windows-874';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { Elysia } from "elysia";
 import 'dotenv/config';
 
-// Project modules
-import { replyTG, escapeMD2 } from './telegram';
-import { TGHeader, tgHeaderVld, TGBody, tgBodyVld, LawInfo, FetchLawRes } from './typedef';
-import { lawAbbrToFull, handleLaw } from './handler';
+// * Project modules
+import { onStart as TGOnStart } from './telegram';
+import { tgHeaderVld, tgBodyVld, TGBody, WSMsg } from './types.d';
+import {
+	onWSMsg as DekaOnWSMSG,
+	onTelegramMsg as DekaOnTelegramMsg
+} from "./handlers/deka";
+import { onTelegramMsg as LawOnTelegramMsg } from './handlers/law';
+import {
+	onStart as DocGenOnStart,
+	onTelegramMsg as DocGenOnTelegramMsg,
+	routePost as DocGenRoutePost,
+	routePostValidator as DocGenRoutePostValidator,
+} from './handlers/doc-gen';
 
 // * Global vars
-const lawDb = new Database("./resources/law_info.sqlite");
-const ajv = new Ajv({allErrors: true});
-AjvKeyword(ajv);
-const tgSecretToken = (Math.random() + 1).toString(36).substring(2);
+import {
+	tgBotToken,
+	tgSecretToken,
+	tgWebhookHost,
+	lawDb,
+	docDb,
+	authorizationHeaders,
+} from './globals';
 
 const app = new Elysia({
 	websocket: {
@@ -26,33 +32,36 @@ const app = new Elysia({
     }
 })
 	.on('start', async () => {
-		console.log('Start | Registering Telegram Webhook');
-		
-		const tgRes = await fetch(
-			`https://api.telegram.org/bot${process.env.TG_BOT_TOKEN}/setWebhook`, {
-				method: 'POST',
-				body: JSON.stringify({
-					url: `${process.env.TG_WEBHOOK_HOST}/telegram`,
-					secret_token: tgSecretToken,
-					allowed_updates: []
-				}),
-				headers: new Headers({
-					'Content-Type': 'application/json'
-				})
-			}
-		);
-		const tgResBody = await tgRes.json();
-		console.log('Start | Registered Telegram Webhook', tgResBody);
-
-		const tgCfRes = await fetch(`https://api.telegram.org/bot${process.env.TG_BOT_TOKEN}/getWebhookInfo`);
-		console.log('Start | Confirmed Telegram Webhook', await tgCfRes.json());
+		await Promise.all([
+			TGOnStart(tgBotToken, tgSecretToken, tgWebhookHost),
+			DocGenOnStart(docDb),
+		]);		
 	})
 	.get("/", () => "Hello Elysia")
+    .ws('/ws', {
+		open(ws) {
+			for (const topic in authorizationHeaders) if (
+				ws.data?.headers?.authorization?.toLowerCase() ===
+					authorizationHeaders[topic].toLowerCase()
+			) {
+				ws.subscribe(topic);
+			}
+		},
+        async message(ws, msg) {
+            console.log('ws | message', msg);
+
+			const payload = msg as WSMsg;
+
+			if (payload.from === 'deka') {
+				await DekaOnWSMSG(tgBotToken, msg as WSMsg);
+			}
+        }
+    })
 	.post("/telegram", async (ctx) => {
 		if (! tgHeaderVld(ctx.headers)){
 			ctx.set.status = 403;
 			return {
-				"error": "Access Denied",
+				"msg": "Access Denied",
 				"err_cde": 4030,
 				"error": tgHeaderVld.errors
 			};
@@ -61,47 +70,24 @@ const app = new Elysia({
 		if (! tgBodyVld(ctx.body)){
 			ctx.set.status = 400;
 			return {
-				"error": "Body validation error",
+				"msg": "Body validation error",
 				"err_cde": 4000,
 				"error": tgBodyVld.errors
 			};
 		}
-		
-		console.log('Telegram | ', {
-			from: ctx.body?.message?.from?.id,
-			text: ctx.body?.message?.text
-		});
 
-		if (/^กม\s/i.test(ctx.body.message.text)) {
-			const lawRes = await handleLaw(ctx.body, lawDb);
+		const body = ctx.body as TGBody;
 
-			if (lawRes !== null) {
-				const lawRplyTxt = lawRes['entries'].length > 0
-					? (`__${escapeMD2(lawRes['law_name'])}:__\n` + lawRes['entries'].map(entry => {
-						return `\\- *มาตรา ${escapeMD2(entry.law_no)}* ${escapeMD2(entry.law_text)}`;
-					}).join('\n'))
-					: `__${escapeMD2(lawRes['law_name'])}:__\nไม่พบมาตราที่ค้นหา`;
-				const lawRplyRes = await replyTG(
-					ctx.body.message.from.id,
-					ctx.body.message.message_id,
-					lawRplyTxt
-				);
-			} else {
-				await replyTG(
-					process.env.TG_BOT_TOKEN,
-					ctx.body.message.from.id,
-					ctx.body.message.message_id,
-					`__Search Law format:__\n
-					\\- \`กม ชื่อกฎหมาย(ป.อ.|ป.พ.พ.|พ.ร.บ.xxxx) xxเลขมาตรา(ถ้ามีเลขบาลีให้เขียนติดกันกับเลขมาตราหลัก)xx\`\n
-					\\- \`กม ชื่อกฎหมาย(ป.อ.|ป.พ.พ.|พ.ร.บ.xxxx) คำ,สำคัญ\`\n
-					`
-				);
-			}
-		}
+		const moduleResList = await Promise.all([
+			DekaOnTelegramMsg(app, tgBotToken, body),
+			LawOnTelegramMsg(tgBotToken, body, lawDb),
+			DocGenOnTelegramMsg(app, tgBotToken, body, docDb)
+		]) as Boolean[];
 
-		return { ok: true };
+		return { ok: moduleResList.indexOf(true) !== -1 };
 	})
-	.listen(process.env.PORT);
+	.post("/doc-gen", DocGenRoutePost(tgBotToken, docDb), DocGenRoutePostValidator)
+	.listen(Number(process.env.PORT ?? '8080'));
 
 console.log(
   `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`
